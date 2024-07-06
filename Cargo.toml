@@ -7,5 +7,6 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
+libcamera = "0.2.3"
 usb-gadget = { git = "https://github.com/mini-ninja-64/usb-gadget.git", branch = "uvc-function" }
 v4l = "0.14.0"

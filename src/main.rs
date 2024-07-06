@@ -1,9 +1,16 @@
+use std::io::{self, Error, ErrorKind};
 use std::{io::stdin, path::PathBuf};
 
 use clap::Parser;
+use libcamera::camera_manager::{self, CameraManager};
+use libcamera::framebuffer_allocator::FrameBufferAllocator;
+use libcamera::framebuffer_map::MemoryMappedFrameBuffer;
+use libcamera::geometry::Size;
+use libcamera::pixel_format::PixelFormat;
+use libcamera::stream::StreamRole;
 use usb_gadget::function::custom::{Custom, Endpoint, EndpointDirection, Interface};
 use v4l::capability::Flags;
-use v4l::video::Capture;
+use v4l::video::{Capture, Output};
 use usb_gadget::{default_udc, Gadget, Class, Id, Strings, Config};
 use usb_gadget::function::uvc::{Uvc, Frame, UvcBuilder};
 use v4l::FourCC;
@@ -12,7 +19,7 @@ use v4l::FourCC;
 #[command(version, about)]
 struct Args {
     #[arg(short, long)]
-    v4l: Option<PathBuf>
+    camera: Option<usize>
 }
 
 fn wait() {
@@ -20,33 +27,14 @@ fn wait() {
     let _ = stdin().read_line(&mut buff);
 }
 
-const MJPEG_FOURCC: FourCC = FourCC { repr: [77,74,80,71] };
-const YUYV_FOURCC: FourCC = FourCC { repr: [89,85,89,86] };
+const MJPEG_FOURCC: FourCC = FourCC { repr: *b"MJPG" };
+const YUYV_FOURCC: FourCC = FourCC { repr: *b"YUYV" };
+const PIXEL_FORMAT_MJPEG: PixelFormat = PixelFormat::new(u32::from_le_bytes(*b"MJPG"), 0);
 
-fn main() {
+fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    let inbound_v4l = args.v4l
-        .map(|path| v4l::Device::with_path(path))
-        .unwrap_or_else(|| v4l::Device::new(0))
-        .expect("v4l device could not be loaded");
-
-    let supports_streaming = inbound_v4l
-    .query_caps()
-    .map(|c| c.capabilities.contains(Flags::STREAMING))
-    .unwrap_or(false);
-    if !supports_streaming {
-        panic!("Input v4l device does not support streaming, gonna esplode now :3");
-    }
-
-    println!("v4l_device: {:#?}", inbound_v4l
-        .enum_formats()
-        .map(|formats| formats.iter()
-            .map(|format| format.fourcc)
-            .collect::<Vec<_>>()
-        ));
-    
-    let udc_device = default_udc().expect("udc could not be loaded");
+    let udc_device = default_udc()?;
     let mut builder = Uvc::builder();
     builder.add_frame(&Frame {
         format: "mjpeg",
@@ -63,16 +51,23 @@ fn main() {
     )
     .with_config(Config::new("config")
     .with_function(handle))
-    .bind(&udc_device)
-    .expect("UVC gadget could not be registered with UDC");
+    .bind(&udc_device)?;
 
-    let outbound_v4l = uvc.get_v4l_device()
-        .and_then(|o| v4l::Device::with_path(o));
-    if outbound_v4l.is_ok() {
-        let outbound_v4l = outbound_v4l.unwrap();
-    }
+    println!("handle: {:?}", gadget.path());
+
+    // let sink_v4l = uvc.get_v4l_device()
+    //     .and_then(|o| v4l::Device::with_path(o));
+    // if let Ok(sink_v4l) = sink_v4l {
+    //     // println!("Sink formats:\n{:#?}", Output::enum_formats(&sink_v4l)?);
+    //     println!("Sink frame sizes:\n{:#?}", Output::enum_framesizes(&sink_v4l, MJPEG_FOURCC)?);
+    //     println!("Sink capabilities:\n{}", sink_v4l.query_caps()?);
+    //     println!("Sink format:\n{}", Output::format(&sink_v4l)?);
+    // }
 
     wait();
 
-    gadget.remove().expect("Unable to unregister UVC gadget");
+    gadget.remove()?;
+    // https://github.com/lit-robotics/libcamera-rs/issues/2#issuecomment-1430644226
+    // https://github.com/raymanfx/libv4l-rs/blob/6d171419c18659b54a6570a1294c047a8d704548/examples/stream_forward_mmap.rs#L9
+    Ok(())
 }
